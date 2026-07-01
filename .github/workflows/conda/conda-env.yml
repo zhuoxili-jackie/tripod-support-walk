@@ -1,0 +1,24 @@
+name: crocoddyl
+channels:
+  - conda-forge
+  - nodefaults
+dependencies:
+  - libboost-devel
+  - libboost-python-devel
+  - numpy
+  - scipy
+  - python
+  - eigen
+  - eigenpy
+  - hpp-fcl
+  - urdfdom
+  - cppad
+  - cppadcodegen
+  - pycppad
+  - pinocchio>=3.1.0
+  - ipopt
+  - nbformat
+  - nbconvert
+  - ipykernel
+  - matplotlib
+  - cxx-compiler

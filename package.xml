@@ -1,0 +1,39 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>crocoddyl</name>
+  <version>3.2.1</version>
+  <description>Crocoddyl optimal control library</description>
+  <!-- The maintainers listed here are for receiving emails e.g. from the ROS buildfarm.
+  Please check the README.md at the repository URL for additional detail. -->
+  <maintainer email="carlos.mastalli@gmail.com">Carlos Mastalli</maintainer>
+  <maintainer email="wolfgang@robots.ox.ac.uk">Wolfgang Merkt</maintainer>
+  <maintainer email="guilhem.saurel@laas.fr">Guilhem Saurel</maintainer>
+
+  <!-- Please refer to README.md for list of authors/credits. -->
+  <license>BSD-3-Clause</license>
+
+  <url type="website">https://github.com/loco-3d/crocoddyl</url>
+
+  <build_depend>git</build_depend>
+  <build_depend>doxygen</build_depend>
+  <build_depend>jrl_cmakemodules</build_depend>
+  <doc_depend>doxygen</doc_depend>
+  <doc_depend>texlive-latex-base</doc_depend>
+  <exec_depend condition="$ROS_VERSION == 2">ament_cmake</exec_depend>
+  <depend>boost</depend>
+  <depend>python3</depend>
+  <depend>python3-numpy</depend>
+  <depend>eigenpy</depend>
+  <depend>pinocchio</depend>
+  <depend>coinor-libipopt-dev</depend>
+  <!-- <test_depend>example_robot_data</test_depend> -->
+  <test_depend>python3-scipy</test_depend>
+  <test_depend>jupyter-notebook</test_depend>
+  <test_depend>jupyter-nbconvert</test_depend>
+  <test_depend>ffmpeg</test_depend>
+
+  <buildtool_depend>cmake</buildtool_depend>
+  <export>
+    <build_type>cmake</build_type>
+  </export>
+</package>
