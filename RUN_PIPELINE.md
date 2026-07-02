@@ -87,6 +87,18 @@ python quadruped_gaits_fwddyn.py
 - 会打印 8 个相的 DDP 迭代日志,最后 `Done. Wrote 8 phases.`。
 - 想改行走速度/方向:改脚本里的 `desired_velocity = np.array([vx, vy, omega])`(当前 `[0,-0.05,0]` = 沿 -Y 侧移)。
 
+```bash
+source ~/miniconda3/etc/profile.d/conda.sh && conda activate croco310
+export PYTHONPATH=/home/zzc/Desktop/zhuoxili-jackie/crocoddyl/build_conda/bindings/python:/home/zzc/Desktop/zhuoxili-jackie/crocoddyl/examples
+cd /home/zzc/Desktop/zhuoxili-jackie/crocoddyl/examples
+python quadruped_walking_fwddyn.py --speed 0.12
+```
+
+- --speed X:目标平均侧向速度(m/s)。
+- 输出自动命名:非 0.05 → trajectory_walking_sideways_sc_v0.12.csv;正好 0.05 → 写基线名 trajectory_walking_sideways.csv(保护基线用)。
+- --cadence-share A(可选,默认 0.5):步频/步长分配。0 = 退回旧「纯步长」;1 = 纯步频;0.5 = 等分(推荐)。
+- --out 路径.csv(可选):强制输出文件名。
+
 ### 验证产物
 
 ```bash

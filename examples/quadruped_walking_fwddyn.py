@@ -29,10 +29,20 @@ rest, so cadenceFactor * strideFactor = R. Cadence is realised by shrinking
 stepKnots/supportKnots (shorter T_step_cycle); ``timeStep`` stays 0.01 always,
 because the 100 Hz CSV contract (RUN_PIPELINE §4) forbids touching it. stepLength
 is then recomputed from the ACTUAL integer-rounded cycle duration, so the average
-speed lands exactly on target. At speed=0.05 nothing changes (R=1 -> stepKnots=35,
-supportKnots=10, stepLength=0.08): the parameters are identical to the baseline,
-so it reproduces trajectory_walking_sideways.csv (row0 exact, rest within ~1e-8
-solver FP noise). The committed baseline file itself is never overwritten here.
+speed lands exactly on target.
+
+Cycle 0 is a SYMMETRIC gentle ramp: the stock ``firstStep`` asymmetry (halving
+only the first two swings) is disabled and instead all four feet take a
+FIRST_CYCLE_STRIDE_FRAC x stepLength step in cycle 0. This removes a cold-start
+tremble of the RL support foot during the FR/RR swings of cycle 0 (present in the
+stock gait, worse at higher speed) with no CoM/pitch regression, while still
+starting from the neutral standing pose. Because cycle 0 seeds the chain, this
+changes the WHOLE trajectory, not just cycle 0: at 0.05 the steady-state feet
+settle at the near-nominal ~0.41 m track width instead of the stock baseline's
+slightly splayed ~0.44 m (the splay was itself a symptom of the asymmetric cold
+start), so the output is genuinely different from -- not a byte-shift of --
+trajectory_walking_sideways.csv. The frozen baseline file is never overwritten
+here; outputs go to trajectory_walking_sideways_sc_v*.csv.
 """
 import argparse
 import csv
@@ -83,9 +93,19 @@ lfFoot, rfFoot, lhFoot, rhFoot = (
     "RR_foot_link", "RL_foot_link", "FR_foot_link", "FL_foot_link",
 )
 gait = SimpleQuadrupedalGaitProblem(robot_pcb.model, lfFoot, rfFoot, lhFoot, rhFoot)
+# The stock ``firstStep`` ramp halves ONLY the first two swings (rh, rf = FL, RL
+# here) while the other two (lh, lf = FR, RR) take a full step -- an ASYMMETRIC
+# cold start. That asymmetry leaves the RL support foot in a weakly-constrained
+# pose that the cold FDDP solve resolves with a visible tremble during the FR/RR
+# swings of cycle 0 (gone by steady state). We disable it and instead ramp cycle
+# 0 SYMMETRICALLY (all four feet at FIRST_CYCLE_STRIDE_FRAC x stepLength below):
+# that kills the tremble (RL foot travel 21 mm -> 0.1 mm) with NO CoM/pitch
+# regression and still starts from the neutral standing pose. Driver-only.
+gait.firstStep = False
 
 # --- gait parameters (baseline: 8 cycles x 165 rows = 1320, like the reference CSV) --
 N_CYCLES = 8
+FIRST_CYCLE_STRIDE_FRAC = 0.5  # symmetric gentle ramp for cycle 0 (all 4 feet half-step)
 timeStep = 0.01              # 100 Hz -- FIXED by the CSV contract, never scaled
 BASE_SPEED = 0.05            # the validated baseline speed
 BASE_STEP_KNOTS = 35         # baseline swing-phase nodes
@@ -105,12 +125,11 @@ supportKnots = max(MIN_SUPPORT_KNOTS, int(BASE_SUPPORT_KNOTS / cadenceFactor + 0
 T_step_cycle = (2 * supportKnots + 4 * stepKnots) * timeStep   # actual cycle duration
 stepLength = args.speed * T_step_cycle                         # hits target avg speed exactly
 
-if args.out:
-    output_path = args.out
-elif args.speed == BASE_SPEED:
-    output_path = "trajectory_walking_sideways.csv"            # baseline name (unchanged)
-else:
-    output_path = f"trajectory_walking_sideways_sc_v{args.speed:.2f}.csv"  # sc = stride x cadence
+# Always write the sc_ ("stride x cadence") name; never auto-overwrite the frozen
+# baseline trajectory_walking_sideways.csv. The sc_ family carries the joint
+# scaling AND the symmetric cycle-0 ramp (jitter fix); the original stock baseline
+# stays committed as-is. Pass --out to override.
+output_path = args.out or f"trajectory_walking_sideways_sc_v{args.speed:.2f}.csv"
 
 swing_window = stepKnots * timeStep
 print(f"speed={args.speed} m/s  R={R:.3f}  cadence-share alpha={alpha}")
@@ -122,8 +141,10 @@ print(f"  stepLength={stepLength:.4f} m  (stride x{stepLength / 0.08:.3f} vs bas
 
 solvers = []
 for i in range(N_CYCLES):
+    # cycle 0 = symmetric gentle ramp from rest; cycles 1+ = full stride
+    cyc_stepLength = FIRST_CYCLE_STRIDE_FRAC * stepLength if i == 0 else stepLength
     problem = gait.createWalkingProblem(
-        x0, stepLength, stepHeight, timeStep, stepKnots, supportKnots,
+        x0, cyc_stepLength, stepHeight, timeStep, stepKnots, supportKnots,
         direction=direction,
     )
     solver = crocoddyl.SolverFDDP(problem)
