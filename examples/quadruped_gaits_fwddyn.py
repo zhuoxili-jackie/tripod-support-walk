@@ -3,7 +3,6 @@ import signal
 import sys
 import time
 
-import example_robot_data
 import numpy as np
 import pinocchio
 
@@ -26,19 +25,20 @@ from pinocchio.robot_wrapper import RobotWrapper
 
 _ROBOT_PATHS = {
     "go2": "/path/to/go2.urdf",
-    "pcb_v2": "/pcb_v2/pcb_v2/pcb_v2.urdf",
+    # paths are relative to this examples/ directory (no leading slash!)
+    "pcb_v2": os.path.join("pcb_v2", "pcb_v2", "urdf", "pcb_v2.urdf"),
 }
 dir_path = os.path.dirname(os.path.realpath(__file__))
-urdf_path = os.path.join(dir_path, "/pcb_v2/urdf/pcb_v2.urdf")
-mesh_path = os.path.join(dir_path, "/pcb_v2/mesh")
+urdf_path = os.path.join(dir_path, _ROBOT_PATHS["pcb_v2"])
+# directory that contains the "mesh/" subfolder referenced inside the URDF
+mesh_dir = os.path.join(dir_path, "pcb_v2", "pcb_v2")
 model_path = os.path.join(dir_path, "pcb_v2")
 print(urdf_path)
 print(model_path)
 
 def load(robot_name):
-    urdf = _ROBOT_PATHS[robot_name]
-    mesh_dir = os.path.dirname(model_path+mesh_path )
-    robot = RobotWrapper.BuildFromURDF(model_path+urdf_path, mesh_dir)
+    urdf = os.path.join(dir_path, _ROBOT_PATHS[robot_name])
+    robot = RobotWrapper.BuildFromURDF(urdf, mesh_dir)
     return robot
 
 robot = pcb()

@@ -2,14 +2,11 @@ import os
 import numpy as np  # Linear Algebra
 
 import pinocchio as pin  # Pinocchio library
-import meshcat.geometry as g
 
 
 from pinocchio.robot_wrapper import RobotWrapper
 from pinocchio.shortcuts import buildModelsFromUrdf
 from pinocchio.visualize import MeshcatVisualizer
-
-import example_robot_data
 
 class pcb:
     def __init__(self):
