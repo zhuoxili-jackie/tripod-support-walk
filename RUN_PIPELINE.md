@@ -117,33 +117,20 @@ python plot.py trajectory_trotting_acc_f005.csv \
 
 ### 3.2 无显示器 / headless:离屏截图
 
-用 `p.connect(p.DIRECT)` + TinyRenderer,不需要 X。参考渲染脚本(可复制到仓库自用):
+用仓库里的 `examples/render_headless.py`(`p.connect(p.DIRECT)` + TinyRenderer,不需要 X):
 
-```python
-import numpy as np, pybullet as p, pybullet_data
-JOINT_NAMES = ["FL_hip_joint","FL_thigh_joint","FL_calf_joint",
-  "FR_hip_joint","FR_thigh_joint","FR_calf_joint",
-  "RL_hip_joint","RL_thigh_joint","RL_calf_joint",
-  "RR_hip_joint","RR_thigh_joint","RR_calf_joint",
-  "FL_foot_joint","FR_foot_joint","RL_foot_joint","RR_foot_joint"]
-data = np.loadtxt("trajectory_trotting_acc_f005.csv", delimiter=",", skiprows=1)
-p.connect(p.DIRECT); p.setAdditionalSearchPath(pybullet_data.getDataPath())
-p.loadURDF("plane.urdf")
-r = p.loadURDF("pcb_v2/pcb_v2/urdf/pcb_v2.urdf", useFixedBase=False)
-idx = {p.getJointInfo(r,j)[1].decode(): j for j in range(p.getNumJoints(r))}
-proj = p.computeProjectionMatrixFOV(55, 4/3, 0.05, 20)
-for k, fi in enumerate(np.linspace(0, len(data)-1, 6).astype(int)):
-    row = data[fi]
-    p.resetBasePositionAndOrientation(r, row[0:3].tolist(), row[3:7].tolist())  # quat xyzw
-    for name, ang in zip(JOINT_NAMES, row[7:]):
-        if name in idx: p.resetJointState(r, idx[name], float(ang))
-    p.stepSimulation()
-    view = p.computeViewMatrixFromYawPitchRoll([row[0],row[1],row[2]-0.1],1.6,50,-25,0,2)
-    _,_,rgb,_,_ = p.getCameraImage(960,720,view,proj,renderer=p.ER_TINY_RENDERER)
-    from PIL import Image
-    Image.fromarray(np.reshape(rgb,(720,960,4))[:,:,:3]).save(f"frame_{k:02d}.png")
-p.disconnect()
+```bash
+conda activate croco310
+pip install pybullet          # 该环境若还没有（Pillow 已随 matplotlib-base 装好）
+cd $REPO/examples
+python render_headless.py trajectory_trotting_acc_f005.csv \
+  --urdf pcb_v2/pcb_v2/urdf/pcb_v2.urdf --outdir frames --nframes 8
+# 也可直接出 GIF：
+python render_headless.py trajectory_trotting_acc_f005.csv \
+  --urdf pcb_v2/pcb_v2/urdf/pcb_v2.urdf --outdir frames --nframes 60 --gif motion.gif
 ```
+
+它会打印 `joints matched: 16/16` 和 base 的 XYZ 范围,可用来快速判断步态是否合理(如侧向 trot 时 Y 明显位移)。
 
 ---
 
