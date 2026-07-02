@@ -137,9 +137,7 @@ pip install pybullet          # 该环境若还没有（Pillow 已随 matplotlib
 cd $REPO/examples
 python render_headless.py trajectory_trotting_acc_f005.csv \
   --urdf pcb_v2/pcb_v2/urdf/pcb_v2.urdf --outdir frames --nframes 8
-# 也可直接出 GIF：
-python render_headless.py trajectory_trotting_acc_f005.csv \
-  --urdf pcb_v2/pcb_v2/urdf/pcb_v2.urdf --outdir frames --nframes 60 --gif motion.gif
+# （日常复核用户自己跑 plot.py；不要再批量生成 PNG/GIF）
 ```
 
 它会打印 `joints matched: 16/16` 和 base 的 XYZ 范围,可用来快速判断步态是否合理(如侧向 trot 时 Y 明显位移)。
