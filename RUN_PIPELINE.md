@@ -143,7 +143,11 @@ python render_headless.py trajectory_trotting_acc_f005.csv \
 | 8–19 | 12 个腿关节 | `FL/FR/RL/RR` × `hip/thigh/calf`(取自 `q[7:]`) |
 | 20–23 | `FL/FR/RL/RR_foot_joint` | 轮/足关节,URDF 里是 fixed 无 DoF → 写 `0.0` 占位 |
 
-无时间戳列;行间隔 = `timeStep = 0.01 s`(100 Hz)。
+无时间戳列;行间隔 = `timeStep = 0.01 s`(100 Hz)。**`timeStep` 是契约固定值,任何变速方案都不得改它**(下游 `csv_to_npz.py` 按 100Hz 取 fps);要提高步频只能缩小 `stepKnots/supportKnots`(见三足支撑驱动 `quadruped_walking_fwddyn.py --cadence-share`)。
+
+> 变速导出(三足支撑,步长×步频联合缩放):
+> `python quadruped_walking_fwddyn.py --speed 0.10`(默认 `--cadence-share 0.5`)→ `trajectory_walking_sideways_sc_v0.10.csv`(行数随步频变,仍 100Hz)。
+> 间距验收:`python _verify_foot_spacing.py <csv> [<csv>...]`(逐周期末 RL-RR/FL-FR 水平间距 + 单调收窄判定)。
 
 ---
 

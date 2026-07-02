@@ -13,8 +13,28 @@ Run (inside examples/ so ``import pcb_v2`` works):
     conda activate croco310
     export PYTHONPATH=<repo>/build_conda/bindings/python:<repo>/examples
     cd <repo>/examples
-    python quadruped_walking_fwddyn.py
+    python quadruped_walking_fwddyn.py                  # default: 0.05 m/s -> trajectory_walking_sideways.csv
+    python quadruped_walking_fwddyn.py --speed 0.1       # -> trajectory_walking_sideways_sc_v0.10.csv
+
+``--speed`` sets the average sideways speed in m/s (v = stepLength /
+T_step_cycle, with T_step_cycle = (2*supportKnots + 4*stepKnots) * timeStep the
+wall-clock duration of one full 4-swing gait cycle).
+
+Higher speed is reached by scaling BOTH stride (stepLength) AND cadence (step
+frequency), instead of the old behaviour of only inflating stepLength -- which
+made the steps huge and the feet spacing narrow cycle after cycle (§0.5-D). The
+speed ratio R = speed/0.05 is split geometrically between the two dimensions via
+``--cadence-share`` alpha in [0,1]: cadenceFactor = R**alpha and stride takes the
+rest, so cadenceFactor * strideFactor = R. Cadence is realised by shrinking
+stepKnots/supportKnots (shorter T_step_cycle); ``timeStep`` stays 0.01 always,
+because the 100 Hz CSV contract (RUN_PIPELINE §4) forbids touching it. stepLength
+is then recomputed from the ACTUAL integer-rounded cycle duration, so the average
+speed lands exactly on target. At speed=0.05 nothing changes (R=1 -> stepKnots=35,
+supportKnots=10, stepLength=0.08): the parameters are identical to the baseline,
+so it reproduces trajectory_walking_sideways.csv (row0 exact, rest within ~1e-8
+solver FP noise). The committed baseline file itself is never overwritten here.
 """
+import argparse
 import csv
 import os
 import signal
@@ -28,6 +48,19 @@ from pcb_v2.pcbWrapper import pcb
 
 signal.signal(signal.SIGINT, signal.SIG_DFL)
 from pinocchio.robot_wrapper import RobotWrapper  # noqa: E402
+
+parser = argparse.ArgumentParser()
+parser.add_argument("--speed", type=float, default=0.05,
+                     help="average sideways speed in m/s (default 0.05, matches the reference CSV)")
+parser.add_argument("--cadence-share", type=float, default=0.5,
+                     help="how the speed-up above 0.05 is split between cadence and "
+                          "stride, alpha in [0,1]: cadenceFactor=R**alpha, "
+                          "strideFactor=R**(1-alpha), R=speed/0.05. 0=pure stride "
+                          "(old --speed behaviour), 1=pure cadence, 0.5=equal "
+                          "geometric split (default). No effect at speed 0.05.")
+parser.add_argument("--out", type=str, default=None,
+                     help="output CSV path (default: derived from --speed)")
+args = parser.parse_args()
 
 dir_path = os.path.dirname(os.path.realpath(__file__))
 urdf_path = os.path.join(dir_path, "pcb_v2", "pcb_v2", "urdf", "pcb_v2.urdf")
@@ -51,16 +84,41 @@ lfFoot, rfFoot, lhFoot, rhFoot = (
 )
 gait = SimpleQuadrupedalGaitProblem(robot_pcb.model, lfFoot, rfFoot, lhFoot, rhFoot)
 
-# --- gait parameters (8 cycles x 165 rows = 1320, like the reference CSV) ----
+# --- gait parameters (baseline: 8 cycles x 165 rows = 1320, like the reference CSV) --
 N_CYCLES = 8
-timeStep = 0.01          # 100 Hz
-stepKnots = 35           # swing-phase nodes
-supportKnots = 10        # double-support nodes
-stepLength = 0.08        # per-cycle sideways displacement
-stepHeight = 0.10        # swing clearance
-direction = (0.0, -1.0)  # walk -Y (sideways), matching the reference
+timeStep = 0.01              # 100 Hz -- FIXED by the CSV contract, never scaled
+BASE_SPEED = 0.05            # the validated baseline speed
+BASE_STEP_KNOTS = 35         # baseline swing-phase nodes
+BASE_SUPPORT_KNOTS = 10      # baseline double-support nodes
+MIN_STEP_KNOTS = 8           # floor: keep the swing arc smooth enough to track
+MIN_SUPPORT_KNOTS = 3        # floor: keep a real double-support / CoM-shift window
+stepHeight = 0.10            # swing clearance
+direction = (0.0, -1.0)      # walk -Y (sideways), matching the reference
 
-output_path = "trajectory_walking_sideways.csv"
+# Joint stride x cadence scaling (§0.5-D): split R = speed/BASE_SPEED geometrically
+# between cadence (via fewer knots -> shorter cycle) and stride (via stepLength).
+R = args.speed / BASE_SPEED
+alpha = args.cadence_share
+cadenceFactor = R ** alpha
+stepKnots = max(MIN_STEP_KNOTS, int(BASE_STEP_KNOTS / cadenceFactor + 0.5))
+supportKnots = max(MIN_SUPPORT_KNOTS, int(BASE_SUPPORT_KNOTS / cadenceFactor + 0.5))
+T_step_cycle = (2 * supportKnots + 4 * stepKnots) * timeStep   # actual cycle duration
+stepLength = args.speed * T_step_cycle                         # hits target avg speed exactly
+
+if args.out:
+    output_path = args.out
+elif args.speed == BASE_SPEED:
+    output_path = "trajectory_walking_sideways.csv"            # baseline name (unchanged)
+else:
+    output_path = f"trajectory_walking_sideways_sc_v{args.speed:.2f}.csv"  # sc = stride x cadence
+
+swing_window = stepKnots * timeStep
+print(f"speed={args.speed} m/s  R={R:.3f}  cadence-share alpha={alpha}")
+print(f"  cadenceFactor={cadenceFactor:.3f} -> stepKnots={stepKnots} "
+      f"supportKnots={supportKnots}  T_step_cycle={T_step_cycle:.3f}s "
+      f"(freq x{1.60 / T_step_cycle:.3f} vs baseline 1.60s)")
+print(f"  stepLength={stepLength:.4f} m  (stride x{stepLength / 0.08:.3f} vs baseline 0.08m)"
+      f"  swing_window={swing_window:.3f}s  peak_tip_speed~{stepLength / swing_window:.3f} m/s")
 
 solvers = []
 for i in range(N_CYCLES):
