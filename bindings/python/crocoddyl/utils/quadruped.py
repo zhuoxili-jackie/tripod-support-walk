@@ -672,6 +672,7 @@ class SimpleQuadrupedalGaitProblem:
         swingFootNames,
         constraint=False,
         direction=(1.0, 0.0),      # 新增：行走方向（单位向量）
+        stateWeights=None,         # 新增：可选 state 正则权重向量（None=保持 stock）
     ):
         """Action models for a footstep phase.
 
@@ -715,6 +716,7 @@ class SimpleQuadrupedalGaitProblem:
                     comTask=comTask,
                     swingFootTask=swingFootTask,
                     constraint=constraint,
+                    stateWeights=stateWeights,
                 )
             ]
         # Action model for the foot switch
@@ -734,6 +736,7 @@ class SimpleQuadrupedalGaitProblem:
         comTask=None,
         swingFootTask=None,
         constraint=False,
+        stateWeights=None,         # 新增：可选 state 正则权重向量（None=保持 stock）
     ):
         """Action model for a swing foot phase.
 
@@ -807,13 +810,14 @@ class SimpleQuadrupedalGaitProblem:
                         self.state, frameTranslationResidual
                     )
                     constraintModel.addConstraint(frame_name + "_footTrack", footTrack)
-        stateWeights = np.array(
-        [0.0] * 3               # base position – 通常不约束
-        + [500.0] * 3           # base orientation
-        + [50.0] * (self.rmodel.nv - 6)   # ★ 关节位置，原来0.01，现在加强
-        + [10.0] * 6            # base velocity
-        + [1.0] * (self.rmodel.nv - 6)     # joint velocity
-    )
+        if stateWeights is None:   # 默认保持 stock（其它步态 trot/walking 不受影响）
+            stateWeights = np.array(
+            [0.0] * 3               # base position – 通常不约束
+            + [500.0] * 3           # base orientation
+            + [50.0] * (self.rmodel.nv - 6)   # ★ 关节位置，原来0.01，现在加强
+            + [10.0] * 6            # base velocity
+            + [1.0] * (self.rmodel.nv - 6)     # joint velocity
+        )
         stateResidual = crocoddyl.ResidualModelState(
             self.state, self.rmodel.defaultState, nu
         )
