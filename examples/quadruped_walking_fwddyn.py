@@ -15,6 +15,7 @@ Run (inside examples/ so ``import pcb_v2`` works):
     cd <repo>/examples
     python quadruped_walking_fwddyn.py                  # default: 0.05 m/s -> trajectory_walking_sideways.csv
     python quadruped_walking_fwddyn.py --speed 0.1       # -> trajectory_walking_sideways_sc_v0.10.csv
+    python quadruped_walking_fwddyn.py --direction left  # +Y mirror -> trajectory_walking_sideways_sc_left_v0.05.csv
 
 ``--speed`` sets the average sideways speed in m/s (v = stepLength /
 T_step_cycle, with T_step_cycle = (2*supportKnots + 4*stepKnots) * timeStep the
@@ -68,6 +69,15 @@ parser.add_argument("--cadence-share", type=float, default=0.5,
                           "strideFactor=R**(1-alpha), R=speed/0.05. 0=pure stride "
                           "(old --speed behaviour), 1=pure cadence, 0.5=equal "
                           "geometric split (default). No effect at speed 0.05.")
+parser.add_argument("--direction", choices=["right", "left"], default="right",
+                     help="sideways walking direction: 'right' = -Y (default, "
+                          "reproduces the committed sc_v*.csv), 'left' = +Y as the "
+                          "EXACT Y-mirror of right -- flips the direction vector "
+                          "AND swaps the L<->R foot-role binding, so the swing "
+                          "order mirrors to FR->RR->FL->RL and the cold-start "
+                          "conditioning matches right (RR ~0.83mm, not the ~1.2mm "
+                          "of a direction-only flip). 'left' writes a 'left_'-"
+                          "tagged filename so the right files are never overwritten.")
 parser.add_argument("--out", type=str, default=None,
                      help="output CSV path (default: derived from --speed)")
 args = parser.parse_args()
@@ -87,11 +97,26 @@ x0 = np.concatenate([q0, v0])
 # createWalkingProblem always swings in the order rh -> rf -> lh -> lf, so the
 # swing order is chosen purely by which real foot each role-name is bound to
 # (a driver-level choice, no library edit). Binding rh=FL, rf=RL, lh=FR, lf=RR
-# reproduces the reference CSV's FL -> RL -> FR -> RR order. Use the natural
-# mapping (lf=FL, rf=FR, lh=RL, rh=RR) instead for the stock RR,FR,RL,FL order.
-lfFoot, rfFoot, lhFoot, rhFoot = (
-    "RR_foot_link", "RL_foot_link", "FR_foot_link", "FL_foot_link",
-)
+# reproduces the reference CSV's FL -> RL -> FR -> RR order (RIGHT / -Y walk).
+# Use the natural mapping (lf=FL, rf=FR, lh=RL, rh=RR) for the stock RR,FR,RL,FL.
+#
+# LEFT (+Y) is generated as the EXACT Y-mirror of the RIGHT gait: flipping only
+# the direction vector (below) keeps this RIGHT binding and yields a "handed"
+# gait whose weakest cold-start support foot lands on RR at ~1.2 mm (vs the RIGHT
+# gait's RL at ~0.8 mm) -- a real, if sub-mm, asymmetry. Mirroring the binding
+# too (swap L<->R feet: rh=FR, rf=RR, lh=FL, lf=RL) makes LEFT the true reflection
+# of RIGHT: RR cold-start drops to the RIGHT gait's 0.83 mm, root_y mirrors to
+# ~1e-4, and the swing order becomes the mirrored FR -> RR -> FL -> RL. The
+# symmetric-ramp jitter fix (gait.firstStep=False below) is direction-independent
+# and applies to both.
+if args.direction == "right":
+    lfFoot, rfFoot, lhFoot, rhFoot = (
+        "RR_foot_link", "RL_foot_link", "FR_foot_link", "FL_foot_link",
+    )
+else:  # left = exact Y-mirror of the right binding (L<->R feet swapped)
+    lfFoot, rfFoot, lhFoot, rhFoot = (
+        "RL_foot_link", "RR_foot_link", "FL_foot_link", "FR_foot_link",
+    )
 gait = SimpleQuadrupedalGaitProblem(robot_pcb.model, lfFoot, rfFoot, lhFoot, rhFoot)
 # The stock ``firstStep`` ramp halves ONLY the first two swings (rh, rf = FL, RL
 # here) while the other two (lh, lf = FR, RR) take a full step -- an ASYMMETRIC
@@ -113,7 +138,9 @@ BASE_SUPPORT_KNOTS = 10      # baseline double-support nodes
 MIN_STEP_KNOTS = 8           # floor: keep the swing arc smooth enough to track
 MIN_SUPPORT_KNOTS = 3        # floor: keep a real double-support / CoM-shift window
 stepHeight = 0.10            # swing clearance
-direction = (0.0, -1.0)      # walk -Y (sideways), matching the reference
+# walk -Y (right, sideways, matches the reference) or its +Y mirror (left).
+dir_sign = -1.0 if args.direction == "right" else 1.0
+direction = (0.0, dir_sign)
 
 # Joint stride x cadence scaling (§0.5-D): split R = speed/BASE_SPEED geometrically
 # between cadence (via fewer knots -> shorter cycle) and stride (via stepLength).
@@ -129,10 +156,12 @@ stepLength = args.speed * T_step_cycle                         # hits target avg
 # baseline trajectory_walking_sideways.csv. The sc_ family carries the joint
 # scaling AND the symmetric cycle-0 ramp (jitter fix); the original stock baseline
 # stays committed as-is. Pass --out to override.
-output_path = args.out or f"trajectory_walking_sideways_sc_v{args.speed:.2f}.csv"
+dir_tag = "" if args.direction == "right" else "left_"
+output_path = args.out or f"trajectory_walking_sideways_sc_{dir_tag}v{args.speed:.2f}.csv"
 
 swing_window = stepKnots * timeStep
-print(f"speed={args.speed} m/s  R={R:.3f}  cadence-share alpha={alpha}")
+print(f"speed={args.speed} m/s  direction={args.direction} (dir_sign={dir_sign:+.0f})  "
+      f"R={R:.3f}  cadence-share alpha={alpha}")
 print(f"  cadenceFactor={cadenceFactor:.3f} -> stepKnots={stepKnots} "
       f"supportKnots={supportKnots}  T_step_cycle={T_step_cycle:.3f}s "
       f"(freq x{1.60 / T_step_cycle:.3f} vs baseline 1.60s)")
