@@ -1,27 +1,43 @@
 #!/usr/bin/env python3
-"""Step 3 (§0.6-3, revised 2026-07-03 per user): tripod gait that leans the CoM
-toward each support triangle but caps the trunk tilt at ~5 deg, accepting that
-hind swings may not fully clear the tip (a later RL policy rewards the rest).
+"""Step 3 (§0.6-3) + v1.11 knock-knee fix (2026-07-03 per user, option B):
+tripod gait that leans the CoM toward each support triangle, caps the trunk tilt
+at ~5 deg, AND pins the hips near neutral to remove the human-like knock-knee
+(内八), accepting that hind swings then tip a little more (a later RL policy
+rewards the rest).
 
-Earlier this driver drove the CoM all the way into the hind triangle -> FALL 0
-but at the cost of a ~18 deg trunk pitch and, when the joint regulariser was
-relaxed, a 59 deg hip splay (knock-knee / 内八). The user's revised call: keep
-the trunk NEARLY LEVEL (<= ~5 deg), keep the legs natural (no knock-knee), lift
-the feet higher, and let the hind swings tip a little (RL training compensates).
+Why the hips splay in the first place: a single-leg-swing gait (walking/tripod)
+has NO diagonal partner to self-balance, so the support-leg hips actively adduct
+to pull the CoM toward the support side. Trotting (diagonal pairs) never needs
+this, which is why trotting hips stay ~0 while stock walking/tripod splay 8-19
+deg. The adduction is a lateral-balance NECESSITY, not a regulariser artefact --
+so merely bumping the hip weight a little does nothing (50->200 only moved 14->13
+deg). The fix here is to pin the hips HARD (``--hip-reg`` 300, effective weight
+1e1*300**2 ~ 1e6, on par with the comTrack) so the hips stay ~7 deg (trotting
+level); the lost lateral balance is NOT recoverable within the ~5 deg tilt cap,
+so the hind swings need a few N more diagonal-front pull than before (worst pull
+~19 N vs ~11 N; still a moderate tip the RL policy absorbs). Body ROLL is NOT
+opened to buy the balance back: doing so injects a ~5 deg world-yaw drift for
+little gain, so pitch/roll/yaw stay stiff and the trunk stays clean.
 
-How the tilt cap and natural legs are enforced: the library createModel/
-createFootstepModels now take an optional ``stateWeights`` vector (default None =
-stock, so trot/walking are unchanged). This driver passes a vector that
-  * lowers base-orientation 500 -> ``--base-ori-reg`` (250 gives ~5 deg tilt), and
-  * keeps hip and thigh/calf at the stock 50 (no splay, no deep crouch).
-The CoM is still nudged toward the triangle by the per-swing comTask + pre-shift,
-but the ~5 deg trunk cap means it falls short on hind swings -> they tip a bit.
+How it is enforced: the library createModel/createFootstepModels take an optional
+``stateWeights`` vector (default None = stock, so trot/walking are unchanged).
+This driver passes a vector that
+  * lowers base-orientation 500 -> ``--base-ori-reg`` (250 keeps tilt ~5 deg), and
+  * RAISES the hip-POSITION weight to ``--hip-reg`` (300) while keeping thigh/calf
+    at the stock ``--joint-reg`` (50). Pinning the hip transfers a little
+    deformation to the front thighs (support bend ~57->67 deg) but no deep crouch.
+  * RAISES the hip-VELOCITY weight to ``--hipvel-reg`` (25). A stiff hip-position
+    cost with the stock velocity weight is under-damped and makes the WHOLE BODY
+    tremble at ~18 Hz (base 2nd-diff 5x, hips 15x, solve 300 iters). Damping only
+    the hip velocities kills the tremble (smoother than stock, ~20 iters) while
+    leaving thigh/calf velocities free so the foot lift is preserved.
 
-Feet lift: front feet swing to ``--front-stepheight`` (0.15 m), hind to
-``--hind-stepheight`` (0.10 m).
+Feet lift: front feet swing to ``--front-stepheight`` (~15 cm actual peak), hind
+to ``--hind-stepheight`` (~10 cm) -- both raised from the old 0.12/0.115 to offset
+the small lift trim the hip-velocity damping causes.
 
 Run (examples/, croco310, build_conda on PYTHONPATH; library already cp'd there):
-    python quadruped_tripod_com.py                 # tilt~5deg, front 15cm / hind 10cm
+    python quadruped_tripod_com.py                 # hip~7deg, tilt<4deg, front 14/hind 9cm
     python _verify_fall.py trajectory_tripod_com_*.csv
 """
 import argparse
@@ -84,11 +100,12 @@ def main():
                     help="avg sideways speed (m/s); scales stride x cadence like the baseline driver")
     ap.add_argument("--cadence-share", type=float, default=0.5,
                     help="alpha: cadence=R**alpha, stride=R**(1-alpha), R=speed/0.05")
-    ap.add_argument("--front-stepheight", type=float, default=0.12,
-                    help="front-foot swing clearance param (~15cm actual peak; front feet "
-                         "on the box arc higher than the param)")
-    ap.add_argument("--hind-stepheight", type=float, default=0.115,
-                    help="hind-foot swing clearance param (~10cm actual peak)")
+    ap.add_argument("--front-stepheight", type=float, default=0.155,
+                    help="front-foot swing clearance param (~15cm actual peak). Raised "
+                         "from 0.12 to offset the hip-velocity damping, which trims lift")
+    ap.add_argument("--hind-stepheight", type=float, default=0.165,
+                    help="hind-foot swing clearance param (~10cm actual peak). Raised "
+                         "from 0.115 to offset the hip-velocity damping")
     ap.add_argument("--stepknots", type=int, default=35)
     ap.add_argument("--preshift", type=int, default=20, help="4-foot CoM-shift nodes before each swing")
     ap.add_argument("--hold", type=int, default=15, help="4-foot settle nodes after each swing")
@@ -99,10 +116,18 @@ def main():
     ap.add_argument("--base-ori-reg", type=float, default=250.0,
                     help="base-orientation weight (stock 500). 250 caps trunk tilt at "
                          "~5 deg; lower = more tilt / more CoM reach, higher = flatter")
-    ap.add_argument("--hip-reg", type=float, default=50.0,
-                    help="hip (lateral) weight (stock 50). Keep at 50 -> no knock-knee/内八")
+    ap.add_argument("--hip-reg", type=float, default=300.0,
+                    help="hip (lateral) weight (stock 50). 300 pins the hips ~7 deg "
+                         "(trotting level) to kill the knock-knee/内八; 50 = stock = "
+                         "splays 14 deg (balance adduction). Higher = less splay but "
+                         "more hind-swing tip (no lateral balance left)")
     ap.add_argument("--joint-reg", type=float, default=50.0,
                     help="thigh+calf weight (stock 50). Keep at 50 -> no deep crouch")
+    ap.add_argument("--hipvel-reg", type=float, default=25.0,
+                    help="hip joint-VELOCITY weight (stock 1). 25 damps the ~18 Hz body "
+                         "trembling that the stiff --hip-reg 300 otherwise induces "
+                         "(under-damped stiff cost). Only the 4 hip velocities are "
+                         "raised -> thigh/calf stay free so the foot lift is preserved")
     ap.add_argument("--constraint", action="store_true", help="hard friction cones (SolverIntro)")
     ap.add_argument("--out", type=str, default=None)
     args = ap.parse_args()
@@ -140,15 +165,20 @@ def main():
     hold = max(3, int(args.hold / cadence + 0.5))
 
     # Custom state-regularisation vector passed to the (patched) library methods:
-    # base-orientation lowered to cap trunk tilt ~5 deg, hip & thigh/calf kept at
-    # stock 50 so legs stay natural (no 内八, no crouch). Layout matches stock:
-    # [0]*3 base-pos + [ori]*3 + [hip,thigh,calf]x4 + [10]*6 base-vel + [1]*joints-vel.
+    # base-orientation lowered to cap trunk tilt ~5 deg, HIP POS RAISED to --hip-reg
+    # (300) to pin the hips ~7 deg (kill the 内八), thigh/calf pos kept at stock 50 (no
+    # deep crouch), and HIP VELOCITY raised to --hipvel-reg (25) to damp the trembling
+    # the stiff hip-pos cost otherwise induces (thigh/calf velocity stays 1 so the foot
+    # lift survives). Layout: [0]*3 base-pos + [ori]*3 + [hip,thigh,calf]x4 pos +
+    # [10]*6 base-vel + [hipvel,1,1]x4 joints-vel.
     nv = model.nv
     joint_ws = []
+    joint_vel_ws = []
     for _ in range(4):                      # FL, FR, RL, RR
         joint_ws += [args.hip_reg, args.joint_reg, args.joint_reg]
+        joint_vel_ws += [args.hipvel_reg, 1.0, 1.0]
     STATE_W = np.array([0.0] * 3 + [args.base_ori_reg] * 3 + joint_ws
-                       + [10.0] * 6 + [1.0] * (nv - 6))
+                       + [10.0] * 6 + joint_vel_ws)
 
     def build(x0):
         q = x0[: model.nq]
@@ -227,8 +257,9 @@ def main():
                 w.writerow(row)
                 n += 1
     print(f"\nwrote {out}: {n} rows x {len(fields)} cols  (order {args.order}, "
-          f"margin {args.margin}, base-ori {args.base_ori_reg} ~5deg-tilt, "
-          f"front {args.front_stepheight*100:.0f}cm / hind {args.hind_stepheight*100:.0f}cm)")
+          f"margin {args.margin}, hip-reg {args.hip_reg} (pin hips ~7deg), "
+          f"hipvel-reg {args.hipvel_reg} (anti-tremble), base-ori {args.base_ori_reg}, "
+          f"front {args.front_stepheight*100:.0f}cm / hind {args.hind_stepheight*100:.0f}cm param)")
 
 
 if __name__ == "__main__":
