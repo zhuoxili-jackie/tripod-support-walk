@@ -95,7 +95,8 @@ python quadruped_walking_fwddyn.py --speed 0.12
 ```
 
 - --speed X:目标平均侧向速度(m/s)。
-- 输出自动命名:非 0.05 → trajectory_walking_sideways_sc_v0.12.csv;正好 0.05 → 写基线名 trajectory_walking_sideways.csv(保护基线用)。
+- 输出自动命名:一律写 trajectory_walking_sideways_sc_v<speed>.csv(v1.4 起**永不自动写基线名** trajectory_walking_sideways.csv,防误覆盖冻结基线;哪怕 --speed 0.05 也写 sc_v0.05.csv)。
+- --direction {right,left}(可选,默认 right):侧移方向。right = −Y(现状);**left = +Y,作为右移的精确 Y 镜像**——除翻方向向量外还会镜像左右脚角色绑定(只翻方向会残留 RR ~1.2mm 冷启动抖动)。left 输出名带 `left_` 前缀(trajectory_walking_sideways_sc_left_v<speed>.csv),不覆盖右移文件。镜像验收:`python _verify_mirror.py`。
 - --cadence-share A(可选,默认 0.5):步频/步长分配。0 = 退回旧「纯步长」;1 = 纯步频;0.5 = 等分(推荐)。
 - --out 路径.csv(可选):强制输出文件名。
 
