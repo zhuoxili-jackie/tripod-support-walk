@@ -673,6 +673,7 @@ class SimpleQuadrupedalGaitProblem:
         constraint=False,
         direction=(1.0, 0.0),      # 新增：行走方向（单位向量）
         stateWeights=None,         # 新增：可选 state 正则权重向量（None=保持 stock）
+        comWeights=None,           # 新增：可选 CoM 跟踪各轴权重（None=各轴等权=stock）
     ):
         """Action models for a footstep phase.
 
@@ -717,6 +718,7 @@ class SimpleQuadrupedalGaitProblem:
                     swingFootTask=swingFootTask,
                     constraint=constraint,
                     stateWeights=stateWeights,
+                    comWeights=comWeights,
                 )
             ]
         # Action model for the foot switch
@@ -737,6 +739,7 @@ class SimpleQuadrupedalGaitProblem:
         swingFootTask=None,
         constraint=False,
         stateWeights=None,         # 新增：可选 state 正则权重向量（None=保持 stock）
+        comWeights=None,           # 新增：可选 CoM 跟踪各轴权重（None=各轴等权=stock）
     ):
         """Action model for a swing foot phase.
 
@@ -747,6 +750,9 @@ class SimpleQuadrupedalGaitProblem:
             each swing foot.
         :param constraint: if True, treat friction cones and swing tasks as
             constraints instead of costs.
+        :param comWeights: optional per-axis weight vector (len 3) for the CoM
+            tracking cost. None keeps the stock equal-axis behaviour. Lower the
+            x entry to let the CoM float fore-aft so the trunk need not recoil.
         :return: integrated action model for the swing phase.
         """
         # Creating a 3D multi-contact model, and then including the supporting
@@ -772,7 +778,15 @@ class SimpleQuadrupedalGaitProblem:
         constraintModel = crocoddyl.ConstraintModelManager(self.state, nu)
         if isinstance(comTask, np.ndarray):
             comResidual = crocoddyl.ResidualModelCoMPosition(self.state, comTask, nu)
-            comTrack = crocoddyl.CostModelResidual(self.state, comResidual)
+            if comWeights is None:
+                comTrack = crocoddyl.CostModelResidual(self.state, comResidual)
+            else:   # per-axis weighting (e.g. relax x so the trunk needn't recoil)
+                comActivation = crocoddyl.ActivationModelWeightedQuad(
+                    np.asarray(comWeights, dtype=float) ** 2
+                )
+                comTrack = crocoddyl.CostModelResidual(
+                    self.state, comActivation, comResidual
+                )
             costModel.addCost("comTrack", comTrack, 1e6)
         for name in footContacts:
             frame_id = self.rmodel.getFrameId(name)
