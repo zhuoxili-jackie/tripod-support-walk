@@ -77,6 +77,17 @@ parser.add_argument("--com-x-weight", type=float, default=0.1,
                          "Lower it (default 0.1) to let the CoM float fore-aft so the "
                          "trunk stops recoiling / swaying when the left legs swing. "
                          "1.0 = stock pin (sway returns); y,z stay pinned.")
+parser.add_argument("--hip-reg", type=float, default=90.0,
+                    help="hip (lateral/ab-adduction) position weight, stock 50. Raised "
+                         "to 90 to trim the hind knock-knee (内八) 16->~12 deg. Higher "
+                         "cuts more 内八 but re-introduces fore-aft sway (the lateral "
+                         "effort relocates to the trunk); 50 = stock (max 内八, min sway).")
+parser.add_argument("--hipvel-reg", type=float, default=25.0,
+                    help="hip joint-VELOCITY weight, stock 1. 25 damps the mild tremble "
+                         "a stiffer hip-position cost can induce (only the 4 hip "
+                         "velocities; thigh/calf stay free so the foot lift survives).")
+parser.add_argument("--joint-reg", type=float, default=50.0,
+                    help="thigh+calf position weight (stock 50); keep at 50.")
 parser.add_argument("--order", type=str, default="FR,RL,RR,FL",
                     help="right-walk swing order; left mirrors L<->R automatically")
 parser.add_argument("--direction", choices=["right", "left"], default="right")
@@ -115,6 +126,17 @@ dir_sign = -1.0 if args.direction == "right" else 1.0
 direction = (0.0, dir_sign)
 # relax fore-aft CoM tracking so the trunk needn't recoil (y,z stay pinned)
 comWeights = np.array([args.com_x_weight, 1.0, 1.0])
+# state regularisation: raise the hip-POSITION weight to trim the hind 内八 (knock-
+# knee), and the hip-VELOCITY weight to damp the tremble a stiffer hip cost induces.
+# base position [0]*3 (anti-sway comes from comWeights, not base reg); base ori 500
+# (stock, keeps the trunk flat -- no tilt); thigh/calf 50 (stock, no crouch); base
+# vel [10]*6; only the 4 hip velocities raised so thigh/calf stay free (foot lift).
+# Layout: [0]*3 + [500]*3 + [hip,thigh,calf]x4 + [10]*6 + [hipvel,1,1]x4.
+_jp, _jv = [], []
+for _ in range(4):                      # FL, FR, RL, RR
+    _jp += [args.hip_reg, args.joint_reg, args.joint_reg]
+    _jv += [args.hipvel_reg, 1.0, 1.0]
+stateWeights = np.array([0.0] * 3 + [500.0] * 3 + _jp + [10.0] * 6 + _jv)
 
 R = args.speed / BASE_SPEED
 cadenceFactor = R ** args.cadence_share
@@ -138,7 +160,8 @@ def build_walking(x0, stepLength):
     comRef = sum(feetPos[n] for n in ALL) / 4.0
     comRef[2] = pinocchio.centerOfMass(model, gait.rdata, q)[2].item()
 
-    ds = [gait.createModel(timeStep=timeStep, footContacts=ALL) for _ in range(supportKnots)]
+    ds = [gait.createModel(timeStep=timeStep, footContacts=ALL, stateWeights=stateWeights)
+          for _ in range(supportKnots)]
 
     def fs(swing):
         support = [n for n in ALL if n != swing]
@@ -146,6 +169,7 @@ def build_walking(x0, stepLength):
         return gait.createFootstepModels(
             comRef, [feetPos[swing]], stepLength, sh, timeStep, stepKnots,
             support, [swing], direction=direction, comWeights=comWeights,
+            stateWeights=stateWeights,
         )
 
     s0, s1, s2, s3 = order
@@ -158,7 +182,7 @@ out = args.out or f"trajectory_tripod_lowstep_{dir_tag}v{args.speed:.2f}.csv"
 print(f"speed={args.speed} dir={args.direction} order={'->'.join(n[:2] for n in order)} "
       f"R={R:.3f} stepKnots={stepKnots} supportKnots={supportKnots} "
       f"stepLength={stepLength:.4f} front/hind-sh={args.front_stepheight:.3f}/{args.hind_stepheight:.3f} "
-      f"com_x_w={args.com_x_weight} -> {out}")
+      f"com_x_w={args.com_x_weight} hip_reg={args.hip_reg} -> {out}")
 
 solvers = []
 for i in range(N_CYCLES):
