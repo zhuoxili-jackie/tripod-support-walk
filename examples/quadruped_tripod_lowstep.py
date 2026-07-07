@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Tripod gait: 0706 swing order (FR->RL->RR->FL) + 0703 CoM approach (NO lean) +
-low ~2 cm foot lift + fore-aft trunk anti-sway (2026-07-06, per user).
+low ~2 cm foot lift + fore-aft trunk anti-sway (2026-07-07, posture-first).
 
 Background: the 0706 driver (quadruped_tripod_com.py) actively leaned the CoM
 forward into each hind support triangle, which pitched the trunk / raised the
@@ -22,6 +22,12 @@ recoiling: base-x sway drops from ~4.9 cm to ~1.8 cm whole-trajectory (left-leg
 surge ~2.0 cm -> ~1.1 cm), CoM x-drift actually shrinks, and the -Y walk, the
 2 cm lift and the flat posture are all unchanged. y/z CoM tracking stays pinned
 (y drives the walk, z holds the height).
+
+2026-07-07 posture-first update: the user now prefers as little fore-aft trunk
+tilt as possible and accepts visible hind knock-knee. Therefore the default hip
+regularization is back to stock (``--hip-reg 50`` and ``--hipvel-reg 1``). This
+keeps pitch/body sway smallest in the low-step setup, at the cost of larger hind
+hip adduction (inner-knee look).
 
 Everything else matches quadruped_tripod_reorder.py: stock double-support +
 per-foot swing phases, symmetric cycle-0 ramp, stride x cadence speed scaling,
@@ -77,15 +83,15 @@ parser.add_argument("--com-x-weight", type=float, default=0.1,
                          "Lower it (default 0.1) to let the CoM float fore-aft so the "
                          "trunk stops recoiling / swaying when the left legs swing. "
                          "1.0 = stock pin (sway returns); y,z stay pinned.")
-parser.add_argument("--hip-reg", type=float, default=90.0,
-                    help="hip (lateral/ab-adduction) position weight, stock 50. Raised "
-                         "to 90 to trim the hind knock-knee (内八) 16->~12 deg. Higher "
-                         "cuts more 内八 but re-introduces fore-aft sway (the lateral "
-                         "effort relocates to the trunk); 50 = stock (max 内八, min sway).")
-parser.add_argument("--hipvel-reg", type=float, default=25.0,
-                    help="hip joint-VELOCITY weight, stock 1. 25 damps the mild tremble "
-                         "a stiffer hip-position cost can induce (only the 4 hip "
-                         "velocities; thigh/calf stay free so the foot lift survives).")
+parser.add_argument("--hip-reg", type=float, default=50.0,
+                    help="hip (lateral/ab-adduction) position weight. 50 is stock and "
+                         "prioritizes minimal fore-aft trunk tilt/sway while accepting "
+                         "visible hind knock-knee (内八). Raising it trims 内八 but "
+                         "re-introduces body pitch/sway.")
+parser.add_argument("--hipvel-reg", type=float, default=1.0,
+                    help="hip joint-VELOCITY weight. 1 is stock and gives the smallest "
+                         "posture motion for the accepted-内八 lowstep version. Raise "
+                         "toward 25 only when using stiffer --hip-reg to damp tremble.")
 parser.add_argument("--joint-reg", type=float, default=50.0,
                     help="thigh+calf position weight (stock 50); keep at 50.")
 parser.add_argument("--order", type=str, default="FR,RL,RR,FL",
