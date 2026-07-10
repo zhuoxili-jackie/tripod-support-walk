@@ -29,6 +29,25 @@ regularization is back to stock (``--hip-reg 50`` and ``--hipvel-reg 1``). This
 keeps pitch/body sway smallest in the low-step setup, at the cost of larger hind
 hip adduction (inner-knee look).
 
+2026-07-09 new initial stance: a colleague handed over a different standing
+configuration (front thigh +20 deg / calf -50 deg, hind thigh +35 deg / calf
++50 deg, base z 0.7459, pitch -67.21 deg). It is injected HERE as ``Q0_NEW``
+rather than into ``pcb_v2/pcbWrapper.py:go_neutral`` on purpose: that function is
+shared by five other drivers (quadruped_walk / _gaits_fwddyn / _walking_fwddyn /
+_tripod_reorder / _tripod_com), which must keep the old stance. ``--pose legacy``
+restores the old one byte-for-byte. Nothing else about the gait was touched.
+
+Two adaptations the new stance forces (the old one needed neither, being exactly
+Y-symmetric with a zero roll/yaw):
+  * its quaternion is renormalized before use; ``--pose legacy`` deliberately is
+    NOT, so it still reproduces the committed CSVs byte-for-byte;
+  * it carries a small roll (-0.058 deg) and yaw (-1.135 deg), so a LEFT walk is
+    seeded with the pose's Y-MIRROR (``--mirror-pose``, default auto) -- swap
+    FL<->FR / RL<->RR, negate the hip angles (hip axis is +X) and the quaternion
+    x,z components. Without it ``_verify_mirror.py`` no longer sees a mirror,
+    because the +Y walk would start from a stance yawed the same way as the -Y
+    walk instead of the opposite way. On the legacy pose the mirror is a no-op.
+
 Everything else matches quadruped_tripod_reorder.py: stock double-support +
 per-foot swing phases, symmetric cycle-0 ramp, stride x cadence speed scaling,
 swing order FR->RL->RR->FL with an exact left/+Y mirror.
@@ -97,6 +116,14 @@ parser.add_argument("--joint-reg", type=float, default=50.0,
 parser.add_argument("--order", type=str, default="FR,RL,RR,FL",
                     help="right-walk swing order; left mirrors L<->R automatically")
 parser.add_argument("--direction", choices=["right", "left"], default="right")
+parser.add_argument("--pose", choices=["new", "legacy"], default="new",
+                    help="'new' (default) = the 2026-07-09 stance in Q0_NEW; "
+                         "'legacy' = pcbWrapper.go_neutral(), i.e. the stance every "
+                         "trajectory before 2026-07-09 was generated from.")
+parser.add_argument("--mirror-pose", choices=["auto", "on", "off"], default="auto",
+                    help="Y-mirror the initial stance for a LEFT walk so it stays the "
+                         "exact mirror of the RIGHT walk. auto = on iff --direction left. "
+                         "A no-op on the legacy (Y-symmetric) pose.")
 parser.add_argument("--out", type=str, default=None)
 args = parser.parse_args()
 
@@ -104,11 +131,57 @@ dir_path = os.path.dirname(os.path.realpath(__file__))
 urdf_path = os.path.join(dir_path, "pcb_v2", "pcb_v2", "urdf", "pcb_v2.urdf")
 mesh_dir = os.path.join(dir_path, "pcb_v2", "pcb_v2")
 
+# 2026-07-09 stance. Order is pinocchio's: base xyz, base quat xyzw, then
+# FL/FR/RL/RR x hip/thigh/calf. Front thigh/calf = +20/-50 deg, hind = +35/+50 deg.
+Q0_NEW = np.array([
+    0.0, 0.0, 0.745913,
+    -0.00590261, -0.553415, -0.00852841, 0.832841,
+    -9.86e-07, 0.349071, -0.872662,
+    2.40670e-06, 0.349062, -0.872669,
+    2.38753e-06, 0.610854, 0.872668,
+    -3.27e-06, 0.610866, 0.872669,
+])
+
+
+def mirror_pose_y(q):
+    """Reflect a configuration about the sagittal (XZ) plane, swapping L<->R legs.
+
+    Under y -> -y: base y negates; the quaternion conjugates as (x,y,z,w) ->
+    (-x,y,-z,w) (roll and yaw negate, pitch survives); the hip angles negate
+    because the hip axis is +X, while thigh/calf ride on +Y and are unchanged.
+    """
+    qm = q.copy()
+    qm[1] = -q[1]
+    qm[3], qm[5] = -q[3], -q[5]
+    FL, FR, RL, RR = slice(7, 10), slice(10, 13), slice(13, 16), slice(16, 19)
+    qm[FL], qm[FR] = q[FR].copy(), q[FL].copy()
+    qm[RL], qm[RR] = q[RR].copy(), q[RL].copy()
+    for hip in (7, 10, 13, 16):
+        qm[hip] = -qm[hip]
+    return qm
+
+
 robot = pcb()
 robot_pcb = RobotWrapper.BuildFromURDF(urdf_path, mesh_dir)
-robot_pcb.model.referenceConfigurations["standing"] = robot.go_neutral()
 model = robot_pcb.model
-q0 = model.referenceConfigurations["standing"].copy()
+
+if args.pose == "legacy":
+    # Passed through raw, quaternion and all: go_neutral's quat is 5.6e-5 off unit
+    # norm, FDDP renormalizes it internally, and reproducing that exactly is the
+    # whole point of this branch (renormalizing here moves the solution 0.036 mm).
+    q0 = robot.go_neutral()
+else:
+    q0 = Q0_NEW.copy()
+    q0[3:7] /= np.linalg.norm(q0[3:7])
+mirror = args.mirror_pose == "on" or (args.mirror_pose == "auto" and args.direction == "left")
+if mirror:
+    q0 = mirror_pose_y(q0)
+# q0 does triple duty: it seeds cycle 0, it fixes the contact geometry (the
+# ContactModel3D pins each foot frame wherever FK(q0) puts it -- there is no
+# ground plane in the model), and via referenceConfigurations["standing"] the
+# gait constructor turns it into rmodel.defaultState, the stateReg target held
+# for every node of every cycle.
+model.referenceConfigurations["standing"] = q0
 x0 = np.concatenate([q0, pinocchio.utils.zero(model.nv)])
 
 # swing order FR->RL->RR->FL (right); its exact L<->R mirror FL->RR->RL->FR (left)
@@ -183,12 +256,17 @@ def build_walking(x0, stepLength):
     return crocoddyl.ShootingProblem(x0, loco[:-1], loco[-1])
 
 
+# p2 = the 2026-07-09 stance. The legacy stance keeps the untagged names it was
+# delivered under, so those eight CSVs are only ever rewritten on an explicit
+# --pose legacy.
+pose_tag = "" if args.pose == "legacy" else "p2_"
 dir_tag = "" if args.direction == "right" else "left_"
-out = args.out or f"trajectory_tripod_lowstep_{dir_tag}v{args.speed:.2f}.csv"
+out = args.out or f"trajectory_tripod_lowstep_{pose_tag}{dir_tag}v{args.speed:.2f}.csv"
 print(f"speed={args.speed} dir={args.direction} order={'->'.join(n[:2] for n in order)} "
       f"R={R:.3f} stepKnots={stepKnots} supportKnots={supportKnots} "
       f"stepLength={stepLength:.4f} front/hind-sh={args.front_stepheight:.3f}/{args.hind_stepheight:.3f} "
-      f"com_x_w={args.com_x_weight} hip_reg={args.hip_reg} -> {out}")
+      f"com_x_w={args.com_x_weight} hip_reg={args.hip_reg} "
+      f"pose={args.pose}{'+mirror' if mirror else ''} -> {out}")
 
 solvers = []
 for i in range(N_CYCLES):
