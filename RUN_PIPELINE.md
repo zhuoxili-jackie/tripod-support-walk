@@ -87,6 +87,31 @@ python quadruped_gaits_fwddyn.py
 - 会打印 8 个相的 DDP 迭代日志,最后 `Done. Wrote 8 phases.`。
 - 想改行走速度/方向:改脚本里的 `desired_velocity = np.array([vx, vy, omega])`(当前 `[0,-0.05,0]` = 沿 -Y 侧移)。
 
+### 2.1 对角步态(trot)可参数化驱动 —— 后续改动请基于它
+
+`quadruped_gaits_fwddyn.py` 是**冻结基线,勿改**(单速度/单方向硬编码)。同一个最优控制问题的干净参数化版本是 `examples/quadruped_trot_sideways.py`:
+
+```bash
+conda activate croco310
+export PYTHONPATH=$REPO/build_conda/bindings/python:$REPO/examples
+cd $REPO/examples
+python quadruped_trot_sideways.py                    # right(-Y) 0.05 m/s,新站姿,约 7 s
+python quadruped_trot_sideways.py --speed 0.20       # right 0.20
+python quadruped_trot_sideways.py --direction left   # left(+Y),右移的精确 Y 镜像
+python quadruped_trot_sideways.py --pose legacy      # 回到 go_neutral() 老站姿
+```
+
+- 输出名 `trajectory_trot_sideways[_left]_v<speed>.csv`(**永不自动写 `trajectory_trotting_acc_*` 冻结名**;要覆盖请显式 `--out`)。
+- 其它开关:`--cycles`(默认 8)、`--step-height`(0.1)、`--step-knots`/`--support-knots`(35/5)、`--max-iters`(100)、`--mirror-pose`(auto)、`--display`。`timeStep` 是契约固定值 0.01,不开放。
+- **`--pose new` 是默认(2026-07-10)**:前大腿 +20°、前小腿 −50°、后大腿 +35°、后小腿 +50°,base z 0.745913、pitch −67.21°(常量 `Q0_NEW`,与 `quadruped_tripod_lowstep.py` 同一个)。**站姿注入在 driver 里,不改 `pcb_v2/pcbWrapper.py:go_neutral`**——那个函数被另外 5 个 driver 共用。`--pose legacy` 逐字节还原老站姿。
+- **`--pose legacy` 复现验收(2026-07-10)**:4 速度 × 2 方向重跑,全部 664 行 × 23 列,与 `trajectory_trotting_acc_{,f}{005,01,015,02}.csv` 逐帧偏差 ≤ **0.55–2.7 mm**(base)/ **0.24–2.6°**(关节),净 Y 位移一致到 0.2 mm。参考 CSV 是在另一台机器(不同 BLAS / 带 ODYN 的构建)上解的,**不可能逐字节相同**;偏差逐周期递减(c0 最大、c7 最小),说明两条轨迹收敛到同一步态。
+- **库改动对 trot 惰性**:把 `build_conda` 的 `crocoddyl/utils/quadruped.py` 换回 `8a6a027`(三足改动之前)重跑,输出**逐位相同(max diff 0.0)**——`stateWeights`/`comWeights` 两个新形参默认 `None` 走 stock 分支,trot 从不传它们。**不要为了 trot 去回滚库**,那会打断三足 driver。
+- **为什么以 trot 作改动起点**:对角双腿同摆自平衡,hip 侧向内收极小(新站姿 0.05 实测 |max| 前 2.8–3.4°、后 5.1–6.1°),不像单腿摆的 walking / tripod 那样出现膝内八(内八)。
+- **LEFT = 右移的精确 Y 镜像**(2026-07-10 起):除翻方向向量外,还做两件事——① 用 `mirror_pose_y()` 镜像初始站姿(新站姿带 roll −0.058°/yaw −1.135°,不做就会从"同向偏航"的姿态起步);② 镜像交给 `SimpleQuadrupedalGaitProblem` 的**左右脚角色绑定**(`lf↔rf`、`lh↔rh`),因为库里 `createTrottingProblem` 恒先摆 `(rfFoot, lhFoot)` 对角,换绑定后左移开局摆 (FL,RR),正是右移 (FR,RL) 的镜像。验收 `python _verify_mirror.py <right.csv> <left.csv>`:实测 base ≤0.48 mm、姿态 ≤0.33 mrad、足端 ≤0.37 mm。
+  > 对照:冻结的 `trajectory_trotting_acc_{005,...}` 早于此改动,是**纯翻方向**;老站姿完美 Y 对称,代价只是半周期相位差,所以当时没暴露。用 `_verify_mirror.py` 查那一对会看到 base y 差 24 mm、足端 90 mm。
+- **每周期爬升 ~5.7 mm**:摆动 dz 剖面最后一个节点没回零(`2*stepHeight/stepKnots`),落地冲量(权重 1e7)钉在该点。实测每脚每周期 5.5–6.1 mm,8 周期 base z 漂 +38~45 mm。stock crocoddyl 行为,参考 CSV 里也有。
+- **没有地面**:`ContactModel3D` 的 Baumgarte 增益是 `[kp=0, kd=50]`,`xref` 是死参数 → 脚停在 `FK(q0)` 放的地方。**初始姿态即地形**。当前站姿前轮在 z≈0.87、后轮在 z≈0.087(前轮踩 0.8 m 高台),摩擦锥法向对四只脚都写死世界 +Z(`Rsurf=I`, `mu=0.7`)。
+
 ```bash
 source ~/miniconda3/etc/profile.d/conda.sh && conda activate croco310
 export PYTHONPATH=/home/zzc/Desktop/zhuoxili-jackie/crocoddyl/build_conda/bindings/python:/home/zzc/Desktop/zhuoxili-jackie/crocoddyl/examples
